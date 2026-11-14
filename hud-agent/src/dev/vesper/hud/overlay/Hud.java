@@ -6,7 +6,13 @@ package dev.vesper.hud.overlay;
  * launcher's preview: one unit is 1/480 of the screen width, times the element's size setting.
  */
 final class Hud {
-    interface Sink { void quad(float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1, int argb); }
+    interface Sink {
+        void quad(float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1, int argb);
+        /** True when the sink draws smooth shapes itself (the GL surface does); others get stepped corners. */
+        default boolean shapes() { return false; }
+        /** A shape in the quad (qx0, qy0)-(qx1, qy1) with its box at (bx, by, bw, bh): mode 1 fill, 2 outline of width w, 3 halo fading over w, 4 spark; a gradient from argb to argb2. */
+        default void shape(float qx0, float qy0, float qx1, float qy1, float bx, float by, float bw, float bh, float r, float w, int mode, int argb, int argb2) { }
+    }
 
     private abstract static class Block {
         final float w, h;
@@ -183,6 +189,7 @@ final class Hud {
     void ring(float x, float y, float w, float h, float r, float bw, int argb) {
         if ((argb >>> 24) == 0 || bw <= 0) return;
         r = Math.max(0f, Math.min(r, Math.min(w, h) / 2f));
+        if (sink.shapes()) { sink.shape(x - 1, y - 1, x + w + 1, y + h + 1, x, y, w, h, r, Math.min(bw, Math.min(w, h) / 2f), 2, argb, argb); return; }
         font.rect(sink, x + r, y, x + w - r, y + bw, argb);
         font.rect(sink, x + r, y + h - bw, x + w - r, y + h, argb);
         font.rect(sink, x, y + r, x + bw, y + h - r, argb);
@@ -205,6 +212,7 @@ final class Hud {
         if ((argb >>> 24) == 0) return;
         r = Math.max(0f, Math.min(r, Math.min(w, h)));
         if (r < 0.5f) { font.rect(sink, x, y, x + w, y + h, argb); return; }
+        if (sink.shapes()) { sink.shape(x - 1, y - 1, x + w + 1, y + h, x, y, w, h + r, r, 0, 1, argb, argb); return; }
         font.rect(sink, x, y + r, x + w, y + h, argb);
         int n = Math.max(1, Math.min(8, (int) Math.ceil(r)));
         for (int i = 0; i < n; i++) {
@@ -214,8 +222,14 @@ final class Hud {
         }
     }
 
-    /** A soft halo around a rounded box: a few widening, fading outlines. */
+    /** A soft halo around a rounded box, strongest at its edge (`alpha`) and fading out over `spread`. */
     void glow(float x, float y, float w, float h, float r, float spread, int rgb, int alpha) {
+        if (alpha <= 0 || spread <= 0) return;
+        if (sink.shapes()) {
+            float e = spread + 1;
+            sink.shape(x - e, y - e, x + w + e, y + h + e, x, y, w, h, Math.max(0f, Math.min(r, Math.min(w, h) / 2f)), spread, 3, (alpha << 24) | (rgb & 0xFFFFFF), (alpha << 24) | (rgb & 0xFFFFFF));
+            return;
+        }
         for (int i = 3; i >= 1; i--) {
             float g = spread * i / 3f;
             roundedFill(x - g, y - g, w + 2 * g, h + 2 * g, r + g, (alpha * (4 - i) / 6 << 24) | (rgb & 0xFFFFFF));
@@ -229,21 +243,20 @@ final class Hud {
         mark(x, y, s);
     }
 
-    /** Just the moon and the spark, drawn row by row from the logo's runs, in the logo's colours. */
+    /**
+     * Just the moon and the spark, over a Logo.BACKGROUND coloured surface: a lilac disc with a disc of the surface colour
+     * cut out of it, and the spark. All of it is smooth shapes, so it stays sharp at any size.
+     */
     void mark(float x, float y, float s) {
-        float k = s / Logo.SIZE, rh = Logo.SIZE / (float) Logo.ROWS;
-        short[] r = Logo.RUNS;
-        for (int i = 0; i < r.length; i += 4) {
-            float y0 = y + r[i] * rh * k, y1 = y + (r[i] + 1) * rh * k, x0 = x + r[i + 2] * k, x1 = x + r[i + 3] * k;
-            int c;
-            if (r[i + 1] == 2) c = 0xFFFFFFFF;
-            else { // the moon fades from light lilac (top left) to the accent (bottom right)
-                float t = Math.max(0f, Math.min(1f, ((r[i + 2] + r[i + 3]) / 2f - 80f + (r[i] + 0.5f) * rh - 130f) / 560f));
-                int rr = Math.round(0xB3 + (0x88 - 0xB3) * t), gg = Math.round(0xA7 + (0x76 - 0xA7) * t), bb = Math.round(0xFF + (0xFB - 0xFF) * t);
-                c = 0xFF000000 | (rr << 16) | (gg << 8) | bb;
-            }
-            font.rect(sink, x0, y0, x1, y1, c);
-        }
+        if (!sink.shapes()) return;
+        float k = s / Logo.SIZE;
+        float ar = Logo.A[2] * k, br = Logo.B[2] * k;
+        sink.shape(x + (Logo.A[0] - Logo.A[2] - 1) * k, y + (Logo.A[1] - Logo.A[2] - 1) * k, x + (Logo.A[0] + Logo.A[2] + 1) * k, y + (Logo.A[1] + Logo.A[2] + 1) * k,
+            x + (Logo.A[0] - Logo.A[2]) * k, y + (Logo.A[1] - Logo.A[2]) * k, 2 * ar, 2 * ar, ar, 0, 1, 0xFFB7ABFF, 0xFF8574FA);
+        sink.shape(x + (Logo.B[0] - Logo.B[2] - 1) * k, y + (Logo.B[1] - Logo.B[2] - 1) * k, x + (Logo.B[0] + Logo.B[2] + 1) * k, y + (Logo.B[1] + Logo.B[2] + 1) * k,
+            x + (Logo.B[0] - Logo.B[2]) * k, y + (Logo.B[1] - Logo.B[2]) * k, 2 * br, 2 * br, br, 0, 1, Logo.BACKGROUND, Logo.BACKGROUND);
+        float sx = Logo.STAR[0] * k, sy = Logo.STAR[1] * k, sh = Logo.STAR[2] * k;
+        sink.shape(x + sx - sh - 1, y + sy - sh - 1, x + sx + sh + 1, y + sy + sh + 1, x + sx - sh, y + sy - sh, 2 * sh, 2 * sh, 0, 0, 4, 0xFFFFFFFF, 0xFFFFFFFF);
     }
 
     /** The small square button added to the pause menu, in the spirit of the game's own icon buttons. */
@@ -251,12 +264,12 @@ final class Hud {
         float g = s / 20f; // one GUI pixel
         if (hover) glow(x, y, s, s, g, 2.5f * g, 0x8F7CFF, 0x70);
         font.rect(sink, x, y, x + s, y + s, 0xFF0A0916);
-        font.rect(sink, x + g, y + g, x + s - g, y + s - g, hover ? 0xFF2A2559 : Logo.BACKGROUND);
+        font.rect(sink, x + g, y + g, x + s - g, y + s - g, Logo.BACKGROUND);
         font.rect(sink, x + g, y + g, x + s - g, y + 2 * g, hover ? 0xFF8F7CFF : 0xFF3A3470);               // lit top edge
         font.rect(sink, x + g, y + g, x + 2 * g, y + s - g, hover ? 0xFF8F7CFF : 0xFF3A3470);               // lit left edge
         font.rect(sink, x + g, y + s - 2 * g, x + s - g, y + s - g, 0x66000000);                            // shaded bottom
         font.rect(sink, x + s - 2 * g, y + g, x + s - g, y + s - g, 0x44000000);                            // shaded right
-        mark(x + 1.5f * g, y + 1.5f * g, s - 3f * g);
+        mark(x + g, y + g, s - 2f * g);
     }
 
     /** A tooltip in the game's own style (dark box, purple edge), sized by the game's GUI scale `gs`. */
@@ -284,30 +297,14 @@ final class Hud {
         roundedFill(x, y, w, h, e.radius * su, withAlpha(e.bg, e.bgOpacity));
         int bc = withAlpha(e.border, e.borderOpacity);
         float bw = e.borderWidth * su;
-        if (e.borderWidth > 0 && (bc >>> 24) != 0) {
-            float r = Math.min(e.radius * su, Math.min(w, h) / 2f);
-            font.rect(sink, x + r, y, x + w - r, y + bw, bc);
-            font.rect(sink, x + r, y + h - bw, x + w - r, y + h, bc);
-            font.rect(sink, x, y + r, x + bw, y + h - r, bc);
-            font.rect(sink, x + w - bw, y + r, x + w, y + h - r, bc);
-            int n = Math.max(1, Math.min(8, (int) Math.ceil(r)));
-            for (int i = 0; i < n && r > 0; i++) { // the four rounded corners, as short runs along the curve
-                float y0 = r * i / n, y1 = r * (i + 1) / n, dy = r - (y0 + y1) / 2f;
-                float inset = r - (float) Math.sqrt(Math.max(0, r * r - dy * dy));
-                float nextDy = r - y1, nextInset = r - (float) Math.sqrt(Math.max(0, r * r - nextDy * nextDy));
-                float run = Math.max(bw, nextInset - inset);
-                font.rect(sink, x + inset, y + y0, x + inset + run, y + y1, bc);
-                font.rect(sink, x + w - inset - run, y + y0, x + w - inset, y + y1, bc);
-                font.rect(sink, x + inset, y + h - y1, x + inset + run, y + h - y0, bc);
-                font.rect(sink, x + w - inset - run, y + h - y1, x + w - inset, y + h - y0, bc);
-            }
-        }
+        if (e.borderWidth > 0 && (bc >>> 24) != 0) ring(x, y, w, h, Math.min(e.radius * su, Math.min(w, h) / 2f), bw, bc);
     }
 
     private void roundedFill(float x, float y, float w, float h, float r, int argb) {
         if ((argb >>> 24) == 0) return;
         r = Math.max(0f, Math.min(r, Math.min(w, h) / 2f));
         if (r < 0.5f) { font.rect(sink, x, y, x + w, y + h, argb); return; }
+        if (sink.shapes()) { sink.shape(x - 1, y - 1, x + w + 1, y + h + 1, x, y, w, h, r, 0, 1, argb, argb); return; }
         font.rect(sink, x, y + r, x + w, y + h - r, argb);
         int n = Math.max(1, Math.min(8, (int) Math.ceil(r)));
         for (int i = 0; i < n; i++) {

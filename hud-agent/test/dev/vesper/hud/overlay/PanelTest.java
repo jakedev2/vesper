@@ -24,6 +24,8 @@ public class PanelTest {
         if (render) { img = new BufferedImage(W, H, BufferedImage.TYPE_INT_ARGB); for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) img.setRGB(x, y, y < H * 0.56 ? 0xFF7CFFFB & 0xFF7CC6FB : 0xFF5CB85C); }
         Hud hud = new Hud(new Hud.Sink() {
             public void quad(float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1, int argb) { if (img != null && render) RenderTest.img = img; if (render) RenderTest.raster(x0, y0, x1, y1, u0, v0, u1, v1, argb); }
+            public boolean shapes() { return true; }
+            public void shape(float a, float b, float c, float d, float e, float f, float g, float h, float r, float w, int mode, int c1, int c2) { if (render) { RenderTest.img = img; RenderTest.shape(a, b, c, d, e, f, g, h, r, w, mode, c1, c2); } }
         }, font, new Stats(), new Input(), 0L);
         hud.draw(cfg, W, H);
         hud.editChrome(W, H, panel.selected, null);
@@ -134,6 +136,33 @@ public class PanelTest {
 
         // the panel's rectangles: nothing runs off the screen
         check(panel.px >= 0 && panel.px + panel.pw <= W && panel.py + panel.ph <= H, "Panel fits on the screen");
+
+        // dragging: the header moves the whole menu, it stays on screen and off the game's own buttons
+        panel.avoid = new float[] { 0, 0, 200, 720 };
+        frame(-1, -1, false, false, false);
+        float x0 = panel.px, y0 = panel.py;
+        float[] h = at("drag");
+        frame(h[0] + 20, h[1] + 8, true, true, false);
+        frame(h[0] + 20 - 300, h[1] + 8 + 120, true, false, false);
+        frame(h[0] + 20 - 300, h[1] + 8 + 120, false, false, false);
+        check(Math.abs((panel.px - x0) + 300) < 1.5f && Math.abs((panel.py - y0) - 120) < 1.5f, "Dragging the header moves the menu with the pointer (" + (panel.px - x0) + "," + (panel.py - y0) + ")");
+        frame(-1, -1, false, false, false);
+        check(Math.abs(panel.px - (x0 - 300)) < 1.5f, "The menu stays where it was dropped");
+        // drop it on top of the game's buttons: it moves to the nearer side instead
+        panel.avoid = new float[] { 400, 200, 420, 300 };
+        h = at("drag");
+        frame(h[0] + 20, h[1] + 8, true, true, false);
+        frame(600, 300, true, false, false);
+        frame(600, 300, false, false, false);
+        boolean clear = panel.px + panel.pw <= 400 || panel.px >= 820;
+        check(clear, "The menu cannot be dropped over the game's buttons");
+        frame(h[0] + 20, h[1] + 8, false, false, false);
+        h = at("drag");
+        frame(h[0] + 20, h[1] + 8, true, true, false);
+        frame(-500, -500, true, false, false);
+        frame(-500, -500, false, false, false);
+        check(panel.px >= 0 && panel.py >= 0, "The menu cannot be dragged off the screen");
+        panel.avoid = null;
 
         // pictures of each tab for a human to look at
         cfg = Config.defaults(); panel = new Panel(); edited.clear();

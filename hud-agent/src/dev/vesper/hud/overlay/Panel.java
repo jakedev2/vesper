@@ -38,6 +38,11 @@ final class Panel {
     boolean done;
     /** The panel never starts left of this pixel column (the game's own buttons are there). */
     float minX;
+    /** The game's own pause-menu buttons (x, y, w, h in pixels), or null: clicks go through to them, so the panel keeps off them. */
+    float[] avoid;
+    /** Where the player dragged the panel to (NaN until they do). */
+    private float userX = Float.NaN, userY = Float.NaN, grabX, grabY;
+    private boolean dragging;
     /** widget id -> x, y, w, h in pixels (hit areas; the tests click through these) */
     final Map<String, float[]> rects = new LinkedHashMap<String, float[]>();
     float px, py, pw, ph;
@@ -64,6 +69,14 @@ final class Panel {
         pw = wu * u; ph = 170f * u; px = W - pw - 4f * u; py = 6f * u;
         cur = cfg.els.get(selected);
         if (cur == null) { selected = "fps"; cur = cfg.els.get("fps"); }
+
+        // the header is the handle: drag it to move the menu anywhere (except over the game's own buttons)
+        if (!Float.isNaN(userX)) { px = userX; py = userY; }
+        if (!down) dragging = false;
+        else if (pressed && hit(px, py, pw - 22f * u, 19f * u)) { dragging = true; grabX = mx - px; grabY = my - py; }
+        if (dragging) { px = mx - grabX; py = my - grabY; }
+        place(W, H);
+        if (dragging || !Float.isNaN(userX)) { userX = px; userY = py; }
 
         // card: halo, glass body, thin outline, accent line along the top
         hud.glow(px, py, pw, ph, 6f * u, 4f * u, 0x8F7CFF, 0x30);
@@ -100,12 +113,28 @@ final class Panel {
         return changed;
     }
 
+    /** Keep the panel on the screen and off the game's own buttons (it moves to whichever side of them is nearer). */
+    private void place(int W, int H) {
+        px = Math.max(0f, Math.min(W - pw, px));
+        py = Math.max(0f, Math.min(H - ph, py));
+        if (avoid == null) return;
+        float m = 2f * u;
+        boolean overlaps = px < avoid[0] + avoid[2] + m && px + pw > avoid[0] - m && py < avoid[1] + avoid[3] + m && py + ph > avoid[1] - m;
+        if (!overlaps) return;
+        float left = avoid[0] - m - pw, right = avoid[0] + avoid[2] + m;
+        boolean canLeft = left >= 0f, canRight = right <= W - pw;
+        if (canLeft && (!canRight || Math.abs(px - left) <= Math.abs(px - right))) px = left;
+        else if (canRight) px = right;
+    }
+
     // ----- header and the "Editing" row -----
 
     private void header(float x, float y, float w) {
         hud.logo(x, y, 13f * u, false);
-        fit("HUD editor", x + 17f * u, y - 1f * u, w - 34f * u, 8f * u, 8.4f * u, TEXT);
-        fit("Drag items on screen to move them", x + 17f * u, y + 7f * u, w - 31f * u, 6f * u, 5.1f * u, MUTED);
+        fit("HUD editor", x + 17f * u, y - 1f * u, w - 42f * u, 8f * u, 8.4f * u, TEXT);
+        fit("Drag items on screen to move them", x + 17f * u, y + 7f * u, w - 40f * u, 6f * u, 5.1f * u, MUTED);
+        rects.put("drag", new float[] { px, py, pw - 22f * u, 19f * u });
+        for (int i = 0; i < 6; i++) hud.fill(x + w - 22f * u + (i % 2) * 2.6f * u, y + 2f * u + (i / 2) * 2.6f * u, 1.3f * u, 1.3f * u, 0.65f * u, dragging ? ACCENT2 : 0x66A09FBA);
         float bx = x + w - 11f * u;
         boolean over = hit(bx, y, 11f * u, 11f * u);
         rects.put("close", new float[] { bx, y, 11f * u, 11f * u });

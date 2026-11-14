@@ -177,6 +177,7 @@ public final class Overlay implements LongConsumer {
         float mx = ptrX, my = ptrY;
         boolean down = ptrDown, pressed = ptrPressed;
         panel.minX = PauseMenu.freeX(W, guiScale(W, H));
+        panel.avoid = PauseMenu.block(W, H, guiScale(W, H));
         boolean overPanel = panel.contains(mx, my) || (down && prevDown && panelHeld);
         if (pressed) panelHeld = overPanel;
         if (!down) panelHeld = false;

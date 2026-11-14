@@ -22,7 +22,9 @@ public class ShotTest {
                 for (int y = 30; y < 680; y++) for (int x = 1300; x < W; x++) img.setRGB(x, y, shot.getRGB(x - 1280, y));
             }
             RenderTest.img = img;
-            Hud hud = new Hud(new Hud.Sink() { public void quad(float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1, int argb) { RenderTest.raster(x0, y0, x1, y1, u0, v0, u1, v1, argb); } }, font, new Stats(), new Input(), 0L);
+            Hud hud = new Hud(new Hud.Sink() { public void quad(float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1, int argb) { RenderTest.raster(x0, y0, x1, y1, u0, v0, u1, v1, argb); }
+            public boolean shapes() { return true; }
+            public void shape(float a, float b, float c, float d, float e, float f, float g, float h, float r, float w, int mode, int c1, int c2) { RenderTest.shape(a, b, c, d, e, f, g, h, r, w, mode, c1, c2); } }, font, new Stats(), new Input(), 0L);
             hud.unit = Math.max(0.5f, Math.min(W / 480f, H / 270f));
             if (mode < 2) {
                 float[] r = PauseMenu.button(W, H, s, true);

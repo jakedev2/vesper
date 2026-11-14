@@ -49,7 +49,7 @@ menu opens on the right, in four small tabs:
 
 The **Editing** row picks the element the next change goes to (arrows), or **All** to change every element at once.
 Drag any element to move it (it snaps to the edges and centre); hover one and press **+** or **-** to resize it.
-**Reset** restores the defaults, and **Done** (or the x, or leaving the menu) finishes. Changes save when you let go
+Drag the menu by its header (the dotted grip) to put it anywhere; it stays off the game's own buttons and remembers its place until you close the game. **Reset** restores the defaults, and **Done** (or the x, or leaving the menu) finishes. Changes save when you let go
 of the mouse into `config/vesper-hud.json`, and the launcher uses that file as its own copy. The text of an element
 ({v} templates) is edited in the launcher, because typing needs the keyboard.
 

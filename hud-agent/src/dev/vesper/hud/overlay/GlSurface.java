@@ -18,7 +18,7 @@ import java.nio.FloatBuffer;
  * program, buffers and texture, and puts back every piece of GL state it touches, so the game never notices.
  */
 final class GlSurface implements Hud.Sink {
-    private static final int MAX_QUADS = 3000, FLOATS = 8; // x y u v r g b a
+    private static final int MAX_QUADS = 3000, FLOATS = 15; // x y u v r g b a | shape: halfW halfH radius width | local x y, mode
     private int prog, vao, vbo, tex, uScreen;
     private final FloatBuffer buf = BufferUtils.createFloatBuffer(MAX_QUADS * 6 * FLOATS);
     private int quads;
@@ -32,12 +32,29 @@ final class GlSurface implements Hud.Sink {
     private final ByteBuffer sMask = BufferUtils.createByteBuffer(4);
     int lastQuads() { return quads; }
 
-    private static final String VS = "#version 150\nin vec2 pos; in vec2 uv; in vec4 col; out vec2 vUv; out vec4 vCol; uniform vec2 screen;\n"
-        + "void main() { vUv = uv; vCol = col; gl_Position = vec4(pos.x / screen.x * 2.0 - 1.0, 1.0 - pos.y / screen.y * 2.0, 0.0, 1.0); }\n";
-    private static final String FS = "#version 150\nin vec2 vUv; in vec4 vCol; out vec4 outColor; uniform sampler2D atlas;\n"
-        + "void main() { outColor = vCol * texture(atlas, vUv); }\n";
+    private static final String VS = "#version 150\nin vec2 pos; in vec2 uv; in vec4 col; in vec4 sh; in vec3 loc; out vec2 vUv; out vec4 vCol; out vec4 vSh; out vec3 vLoc; uniform vec2 screen;\n"
+        + "void main() { vUv = uv; vCol = col; vSh = sh; vLoc = loc; gl_Position = vec4(pos.x / screen.x * 2.0 - 1.0, 1.0 - pos.y / screen.y * 2.0, 0.0, 1.0); }\n";
+    /**
+     * Text and plain rectangles sample the atlas. Shapes (rounded boxes, outlines, halos, the logo's spark) are worked
+     * out per pixel from a distance to the shape's edge, which gives smooth anti-aliased edges at any size:
+     * mode 1 fill, 2 outline `w` thick, 3 halo fading over `w`, 4 spark.
+     */
+    private static final String FS = "#version 150\nin vec2 vUv; in vec4 vCol; in vec4 vSh; in vec3 vLoc; out vec4 outColor; uniform sampler2D atlas;\n"
+        + "float cover() {\n"
+        + "  if (vLoc.z < 0.5) return 1.0;\n"
+        + "  vec2 p = vLoc.xy;\n"
+        + "  if (vLoc.z > 3.5) { vec2 q = abs(p) / vSh.xy; float f = pow(q.x, 0.65) + pow(q.y, 0.65) - 1.0; return clamp(0.5 - f / max(fwidth(f), 0.0001), 0.0, 1.0); }\n"
+        + "  vec2 q = abs(p) - vSh.xy + vec2(vSh.z);\n"
+        + "  float d = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - vSh.z;\n"
+        + "  if (vLoc.z < 1.5) return clamp(0.5 - d, 0.0, 1.0);\n"
+        + "  if (vLoc.z < 2.5) return clamp(0.5 - d, 0.0, 1.0) * clamp(d + vSh.w + 0.5, 0.0, 1.0);\n"
+        + "  float t = 1.0 - clamp(d / max(vSh.w, 0.001), 0.0, 1.0); return t * t;\n"
+        + "}\n"
+        + "void main() { vec4 c = vCol * texture(atlas, vUv); c.a *= cover(); outColor = c; }\n";
 
     GlSurface(Font font) {
+        whiteU = ((95 % font.cols) * font.cellW + font.cellW / 2f) / font.texW;
+        whiteV = ((95 / font.cols) * font.cellH + font.cellH / 2f) / font.texH;
         hasSampler = GL.getCapabilities().OpenGL33;
         int oldPub = GL11.glGetInteger(0x88EF), oldTex, oldActive = GL11.glGetInteger(0x84E0);
         GL15.glBindBuffer(0x88EC, 0); // no pixel-unpack buffer while uploading from memory
@@ -45,8 +62,7 @@ final class GlSurface implements Hud.Sink {
         oldTex = GL11.glGetInteger(0x8069);
         tex = GL11.glGenTextures();
         GL11.glBindTexture(0x0DE1, tex);
-        GL11.glTexParameteri(0x0DE1, 0x2801, 0x2601); // linear
-        GL11.glTexParameteri(0x0DE1, 0x2800, 0x2601);
+        GL11.glTexParameteri(0x0DE1, 0x2800, 0x2601); // magnify: linear
         GL11.glTexParameteri(0x0DE1, 0x2802, 0x812F); // clamp
         GL11.glTexParameteri(0x0DE1, 0x2803, 0x812F);
         ByteBuffer px = BufferUtils.createByteBuffer(font.texW * font.texH * 4);
@@ -55,6 +71,9 @@ final class GlSurface implements Hud.Sink {
         int oldAlign = GL11.glGetInteger(0x0CF5);
         GL11.glPixelStorei(0x0CF5, 1);
         GL11.glTexImage2D(0x0DE1, 0, 0x1908, font.texW, font.texH, 0, 0x1908, 0x1401, px);
+        // the atlas is baked large and drawn smaller: mipmaps keep small text smooth instead of shimmering
+        GL30.glGenerateMipmap(0x0DE1);
+        GL11.glTexParameteri(0x0DE1, 0x2801, 0x2703); // minify: trilinear
         GL11.glPixelStorei(0x0CF5, oldAlign);
         GL11.glBindTexture(0x0DE1, oldTex);
         GL13.glActiveTexture(oldActive);
@@ -64,6 +83,7 @@ final class GlSurface implements Hud.Sink {
         prog = GL20.glCreateProgram();
         GL20.glAttachShader(prog, vs); GL20.glAttachShader(prog, fs);
         GL20.glBindAttribLocation(prog, 0, "pos"); GL20.glBindAttribLocation(prog, 1, "uv"); GL20.glBindAttribLocation(prog, 2, "col");
+        GL20.glBindAttribLocation(prog, 3, "sh"); GL20.glBindAttribLocation(prog, 4, "loc");
         GL20.glLinkProgram(prog);
         if (GL20.glGetProgrami(prog, 0x8B82) == 0) throw new IllegalStateException("link failed: " + GL20.glGetProgramInfoLog(prog, 1024));
         GL20.glDeleteShader(vs); GL20.glDeleteShader(fs);
@@ -78,6 +98,8 @@ final class GlSurface implements Hud.Sink {
         GL20.glEnableVertexAttribArray(0); GL20.glVertexAttribPointer(0, 2, 0x1406, false, FLOATS * 4, 0L);
         GL20.glEnableVertexAttribArray(1); GL20.glVertexAttribPointer(1, 2, 0x1406, false, FLOATS * 4, 8L);
         GL20.glEnableVertexAttribArray(2); GL20.glVertexAttribPointer(2, 4, 0x1406, false, FLOATS * 4, 16L);
+        GL20.glEnableVertexAttribArray(3); GL20.glVertexAttribPointer(3, 4, 0x1406, false, FLOATS * 4, 32L);
+        GL20.glEnableVertexAttribArray(4); GL20.glVertexAttribPointer(4, 3, 0x1406, false, FLOATS * 4, 48L);
         GL20.glUseProgram(prog);
         GL20.glUniform1i(uAtlas, 0);
         GL20.glUseProgram(oldProg);
@@ -127,16 +149,37 @@ final class GlSurface implements Hud.Sink {
         GL30.glBindVertexArray(vao);
     }
 
+    public boolean shapes() { return true; }
+
     public void quad(float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1, int argb) {
         if (quads >= MAX_QUADS) return;
         float a = (argb >>> 24) / 255f, r = ((argb >> 16) & 255) / 255f, g = ((argb >> 8) & 255) / 255f, b = (argb & 255) / 255f;
-        put(x0, y0, u0, v0, r, g, b, a); put(x1, y0, u1, v0, r, g, b, a); put(x1, y1, u1, v1, r, g, b, a);
-        put(x0, y0, u0, v0, r, g, b, a); put(x1, y1, u1, v1, r, g, b, a); put(x0, y1, u0, v1, r, g, b, a);
+        put(x0, y0, u0, v0, r, g, b, a, 0, 0, 0, 0, 0, 0, 0); put(x1, y0, u1, v0, r, g, b, a, 0, 0, 0, 0, 0, 0, 0); put(x1, y1, u1, v1, r, g, b, a, 0, 0, 0, 0, 0, 0, 0);
+        put(x0, y0, u0, v0, r, g, b, a, 0, 0, 0, 0, 0, 0, 0); put(x1, y1, u1, v1, r, g, b, a, 0, 0, 0, 0, 0, 0, 0); put(x0, y1, u0, v1, r, g, b, a, 0, 0, 0, 0, 0, 0, 0);
         quads++;
     }
 
-    private void put(float x, float y, float u, float v, float r, float g, float b, float a) {
-        buf.put(x).put(y).put(u).put(v).put(r).put(g).put(b).put(a);
+    /** A shape in the quad (qx0..qy1) whose box is (bx, by, bw, bh); `argb` is the top-left colour and `argb2` the bottom-right (a gradient). */
+    public void shape(float qx0, float qy0, float qx1, float qy1, float bx, float by, float bw, float bh, float r, float w, int mode, int argb, int argb2) {
+        if (quads >= MAX_QUADS) return;
+        float[] c1 = rgba(argb), c2 = rgba(argb2), cm = { (c1[0] + c2[0]) / 2, (c1[1] + c2[1]) / 2, (c1[2] + c2[2]) / 2, (c1[3] + c2[3]) / 2 };
+        float hw = bw / 2f, hh = bh / 2f, cx = bx + hw, cy = by + hh, m = mode;
+        float u = whiteU, v = whiteV;
+        put(qx0, qy0, u, v, c1[0], c1[1], c1[2], c1[3], hw, hh, r, w, qx0 - cx, qy0 - cy, m);
+        put(qx1, qy0, u, v, cm[0], cm[1], cm[2], cm[3], hw, hh, r, w, qx1 - cx, qy0 - cy, m);
+        put(qx1, qy1, u, v, c2[0], c2[1], c2[2], c2[3], hw, hh, r, w, qx1 - cx, qy1 - cy, m);
+        put(qx0, qy0, u, v, c1[0], c1[1], c1[2], c1[3], hw, hh, r, w, qx0 - cx, qy0 - cy, m);
+        put(qx1, qy1, u, v, c2[0], c2[1], c2[2], c2[3], hw, hh, r, w, qx1 - cx, qy1 - cy, m);
+        put(qx0, qy1, u, v, cm[0], cm[1], cm[2], cm[3], hw, hh, r, w, qx0 - cx, qy1 - cy, m);
+        quads++;
+    }
+
+    private float whiteU, whiteV;
+
+    private static float[] rgba(int argb) { return new float[] { ((argb >> 16) & 255) / 255f, ((argb >> 8) & 255) / 255f, (argb & 255) / 255f, (argb >>> 24) / 255f }; }
+
+    private void put(float x, float y, float u, float v, float r, float g, float b, float a, float hw, float hh, float rad, float w, float lx, float ly, float mode) {
+        buf.put(x).put(y).put(u).put(v).put(r).put(g).put(b).put(a).put(hw).put(hh).put(rad).put(w).put(lx).put(ly).put(mode);
     }
 
     void end() {
